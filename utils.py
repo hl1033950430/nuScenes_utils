@@ -3,8 +3,10 @@ import numpy as np
 from nuscenes.prediction import PredictHelper
 from nuscenes.map_expansion.map_api import NuScenesMap
 
-
 # 获取半径范围内的所有道路，离散化
+from pyquaternion import Quaternion
+
+
 def get_lanes_in_radius(x: float, y: float, radius: float,
                         discretization_meters: float,
                         map_api):
@@ -28,7 +30,7 @@ def distance(x1, y1, x2, y2):
 
 
 # 获取前进方向左边的点
-def get_left_point(target_x, target_y, yaw, offset=4):
+def get_left_point(target_x, target_y, yaw, offset=5):
     # yaw = correct_yaw(yaw)
     x, y = target_x, target_y + offset
     x, y = rotate(yaw, (x, y), (target_x, target_y))
@@ -36,7 +38,7 @@ def get_left_point(target_x, target_y, yaw, offset=4):
 
 
 # 获取前进方向右边的点
-def get_right_point(target_x, target_y, yaw, offset=4):
+def get_right_point(target_x, target_y, yaw, offset=5):
     # yaw = correct_yaw(yaw)
     x, y = target_x, target_y - offset
     x, y = rotate(yaw, (x, y), (target_x, target_y))
@@ -44,22 +46,65 @@ def get_right_point(target_x, target_y, yaw, offset=4):
 
 
 # 获取道路 lane 中，与 (x, y) 最近的点
-def get_closet_pos(lane, x, y):
+def get_closest_pos(lane, x, y):
     if len(lane) == 0:
         return -1
     return np.argmin(np.array([(pos[0] - x) ** 2 + (pos[1] - y) ** 2 for i, pos in enumerate(lane)]))
 
 
+def quaternion_yaw(q) -> float:
+    """
+    Calculate the yaw angle from a quaternion.
+    Note that this only works for a quaternion that represents a box in lidar or global coordinate frame.
+    It does not work for a box in the camera frame.
+    :param q: Quaternion of interest.
+    :return: Yaw angle in radians.
+    """
+
+    # Project into xy plane.
+    v = np.dot(q.rotation_matrix, np.array([1, 0, 0]))
+
+    # Measure yaw using arctan.
+    yaw = np.arctan2(v[1], v[0])
+
+    return yaw
+
+
+# 根据 annotation 里的 rotation 字段，获取正确的角度值
+def get_correct_yaw(rotation):
+    return quaternion_yaw(Quaternion(rotation))
+
+
+# 根据位置和角度获取最近的车道
+def get_closest_lane(nusc_map, target_x, target_y, target_yaw=None, radius=2):
+    min_distance = 9999
+    result = ''
+    yaw_threshold = np.pi / 4
+    # 获取车辆附近所有的车道
+    lanes = get_lanes_in_radius(target_x, target_y, 40, 1, nusc_map)
+    for key in lanes:
+        lane = lanes[key]
+        for pos in lane:
+            dis = distance(pos[0], pos[1], target_x, target_y)
+            if dis <= radius and (target_yaw is None or -yaw_threshold <= target_yaw - pos[2] <= yaw_threshold):
+                # 满足距离和角度
+                if dis < min_distance:
+                    # 且是最近的距离
+                    min_distance = dis
+                    result = key
+    return result
+
+
 # 获取车辆前方的道路，并离散化
-def get_front_lane(nusc_map, target_x, target_y):
+def get_front_lane(nusc_map, target_x, target_y, target_yaw=None):
     result = []
     # 获取车辆附近所有的车道
     lanes = get_lanes_in_radius(target_x, target_y, 40, 1, nusc_map)
-    target_lane = nusc_map.get_closest_lane(target_x, target_y, radius=2)
+    target_lane_token = get_closest_lane(nusc_map, target_x, target_y, target_yaw, radius=2)
     # 车辆可能没在道路上
-    if target_lane == '':
+    if target_lane_token == '':
         return result
-    target_lane = lanes[target_lane]
+    target_lane = lanes[target_lane_token]
     result.extend(target_lane)
     # 车道，获取与车道相连的车道
     end_point_x, end_point_y = target_lane[-1][0], target_lane[-1][1]
@@ -81,26 +126,27 @@ def get_front_lane(nusc_map, target_x, target_y):
 
 
 # 获取附近的车道
-def get_neighbor_lane(nusc_map, target_x, target_y, offset):
+# target_x, target_y : 目标位置附近的车道
+# target_lane_token : 目标车道旁边的车道
+def get_neighbor_lane(nusc_map, target_x, target_y, target_lane, offset):
     # 获取当前车道的位置
-    lane = get_front_lane(nusc_map, target_x, target_y)
-    pos = get_closet_pos(lane, target_x, target_y)
-    target_x, target_y, yaw = lane[pos][0], lane[pos][1], lane[pos][2]
+    pos = get_closest_pos(target_lane, target_x, target_y)
+    target_x, target_y, yaw = target_lane[pos][0], target_lane[pos][1], target_lane[pos][2]
     # 当前车道位置，附近的点
     x, y = offset(target_x, target_y, yaw)
     # 根据点获取最近的车道，要求与当前道路不同且方向与当前车道方向一致
-    neighbor_lane = get_front_lane(nusc_map, x, y)
+    neighbor_lane = get_front_lane(nusc_map, x, y, yaw)
     return neighbor_lane
 
 
 # 左侧的车道
-def get_left_lane(nusc_map, target_x, target_y):
-    return get_neighbor_lane(nusc_map, target_x, target_y, get_left_point)
+def get_left_lane(nusc_map, target_x, target_y, target_lane):
+    return get_neighbor_lane(nusc_map, target_x, target_y, target_lane, get_left_point)
 
 
 # 右侧的车道
-def get_right_lane(nusc_map, target_x, target_y):
-    return get_neighbor_lane(nusc_map, target_x, target_y, get_right_point)
+def get_right_lane(nusc_map, target_x, target_y, target_lane):
+    return get_neighbor_lane(nusc_map, target_x, target_y, target_lane, get_right_point)
 
 
 # 获取附近所有车辆
@@ -119,15 +165,15 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
 
     # 获取周围车辆
     threshold_within_lane = 2
-    target_pos = get_closet_pos(lane, target_x, target_y)
+    target_pos = get_closest_pos(lane, target_x, target_y)
     annotations = helper.get_annotations_for_sample(sample_token)
     annotations = [ann for ann in annotations if
                    ann['category_name'].startswith('vehicle') and ann['token'] != target_ann['token']]
     for ann in annotations:
         x, y, yaw = ann['translation']
-        pos = get_closet_pos(lane, x, y)
-        pos_on_left = get_closet_pos(left_lane, x, y)
-        pos_on_right = get_closet_pos(right_lane, x, y)
+        pos = get_closest_pos(lane, x, y)
+        pos_on_left = get_closest_pos(left_lane, x, y)
+        pos_on_right = get_closest_pos(right_lane, x, y)
         distance_to_lane = distance(x, y, lane[pos][0], lane[pos][1])
         distance_to_left_lane = distance(x, y, left_lane[pos_on_left][0], left_lane[pos_on_left][1])
         distance_to_right_lane = distance(x, y, right_lane[pos_on_right][0], right_lane[pos_on_right][1])
