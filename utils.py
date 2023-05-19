@@ -30,7 +30,7 @@ def distance(x1, y1, x2, y2):
 
 
 # 获取前进方向左边的点
-def get_left_point(target_x, target_y, yaw, offset=5):
+def get_left_point(target_x, target_y, yaw, offset=3):
     # yaw = correct_yaw(yaw)
     x, y = target_x, target_y + offset
     x, y = rotate(yaw, (x, y), (target_x, target_y))
@@ -38,7 +38,7 @@ def get_left_point(target_x, target_y, yaw, offset=5):
 
 
 # 获取前进方向右边的点
-def get_right_point(target_x, target_y, yaw, offset=5):
+def get_right_point(target_x, target_y, yaw, offset=3):
     # yaw = correct_yaw(yaw)
     x, y = target_x, target_y - offset
     x, y = rotate(yaw, (x, y), (target_x, target_y))
@@ -157,9 +157,9 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
     min_distance = {}
 
     # 获取当前车辆所在的道路、左右侧的道路
-    lane = get_front_lane(nusc_map, target_x, target_y)
-    left_lane = get_left_lane(nusc_map, target_x, target_y)
-    right_lane = get_right_lane(nusc_map, target_x, target_y)
+    lane = get_front_lane(nusc_map, target_x, target_y, get_correct_yaw(target_ann['rotation']))
+    left_lane = get_left_lane(nusc_map, target_x, target_y, lane)
+    right_lane = get_right_lane(nusc_map, target_x, target_y, lane)
     if len(lane) == 0:
         return result
 
@@ -175,8 +175,6 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
         pos_on_left = get_closest_pos(left_lane, x, y)
         pos_on_right = get_closest_pos(right_lane, x, y)
         distance_to_lane = distance(x, y, lane[pos][0], lane[pos][1])
-        distance_to_left_lane = distance(x, y, left_lane[pos_on_left][0], left_lane[pos_on_left][1])
-        distance_to_right_lane = distance(x, y, right_lane[pos_on_right][0], right_lane[pos_on_right][1])
 
         # 前车
         if distance_to_lane <= threshold_within_lane and pos - target_pos >= 0:
@@ -185,32 +183,32 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
                 result['front'] = ann
                 min_distance['front'] = pos - target_pos
 
-        # 左前车
-        if distance_to_left_lane <= threshold_within_lane and pos_on_left - target_pos >= 0:
-            # 只获取最近的
-            if min_distance.get('left_front') is None or min_distance.get('left_front') > (pos_on_left - target_pos):
-                result['left_front'] = ann
-                min_distance['left_front'] = pos_on_left - target_pos
+        # 左前车、左后车
+        if pos_on_left != -1:
+            distance_to_left_lane = distance(x, y, left_lane[pos_on_left][0], left_lane[pos_on_left][1])
+            if distance_to_left_lane <= threshold_within_lane and pos_on_left - target_pos >= 0:
+                # 只获取最近的
+                if min_distance.get('left_front') is None or min_distance.get('left_front') > (pos_on_left - target_pos):
+                    result['left_front'] = ann
+                    min_distance['left_front'] = pos_on_left - target_pos
+            if distance_to_left_lane <= threshold_within_lane and target_pos - pos_on_left >= 0:
+                # 只获取最近的
+                if min_distance.get('left_back') is None or min_distance.get('left_back') > (target_pos - pos_on_left):
+                    result['left_back'] = ann
+                    min_distance['left_back'] = target_pos - pos_on_left
 
-        # 右前车
-        if distance_to_right_lane <= threshold_within_lane and pos_on_right - target_pos >= 0:
-            # 只获取最近的
-            if min_distance.get('right_front') is None or min_distance.get('right_front') > (pos_on_right - target_pos):
-                result['right_front'] = ann
-                min_distance['right_front'] = pos_on_right - target_pos
-
-        # 左后车
-        if distance_to_left_lane <= threshold_within_lane and target_pos - pos_on_left >= 0:
-            # 只获取最近的
-            if min_distance.get('left_back') is None or min_distance.get('left_back') > (target_pos - pos_on_left):
-                result['left_back'] = ann
-                min_distance['left_back'] = target_pos - pos_on_left
-
-        # 右后车
-        if distance_to_right_lane <= threshold_within_lane and target_pos - pos_on_right >= 0:
-            # 只获取最近的
-            if min_distance.get('right_back') is None or min_distance.get('right_back') > (target_pos - pos_on_right):
-                result['right_back'] = ann
-                min_distance['right_back'] = target_pos - pos_on_right
+        # 右前车、右后车
+        if pos_on_right != -1:
+            distance_to_right_lane = distance(x, y, right_lane[pos_on_right][0], right_lane[pos_on_right][1])
+            if distance_to_right_lane <= threshold_within_lane and pos_on_right - target_pos >= 0:
+                # 只获取最近的
+                if min_distance.get('right_front') is None or min_distance.get('right_front') > (pos_on_right - target_pos):
+                    result['right_front'] = ann
+                    min_distance['right_front'] = pos_on_right - target_pos
+            if distance_to_right_lane <= threshold_within_lane and target_pos - pos_on_right >= 0:
+                # 只获取最近的
+                if min_distance.get('right_back') is None or min_distance.get('right_back') > (target_pos - pos_on_right):
+                    result['right_back'] = ann
+                    min_distance['right_back'] = target_pos - pos_on_right
 
     return result
