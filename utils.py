@@ -25,7 +25,7 @@ def rotate(angle, pointP, pointQ):
     return [x, y]
 
 
-def distance(x1, y1, x2, y2):
+def point_distance(x1, y1, x2, y2):
     return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** (1 / 2)
 
 
@@ -78,19 +78,26 @@ def get_correct_yaw(rotation):
 # 根据位置和角度获取最近的车道
 def get_closest_lane(nusc_map, target_x, target_y, target_yaw=None, radius=2):
     min_distance = 9999
+    min_yaw_distance = np.pi
     result = ''
     yaw_threshold = np.pi / 4
     # 获取车辆附近所有的车道
     lanes = get_lanes_in_radius(target_x, target_y, 40, 1, nusc_map)
     for key in lanes:
         lane = lanes[key]
-        for pos in lane:
-            dis = distance(pos[0], pos[1], target_x, target_y)
-            if dis <= radius and (target_yaw is None or -yaw_threshold <= target_yaw - pos[2] <= yaw_threshold):
+        for index, pos in enumerate(lane):
+            distance = point_distance(pos[0], pos[1], target_x, target_y)
+            yaw_distance = abs(get_lane_start_yaw(lane[index:]) - target_yaw)
+            if distance <= radius and (target_yaw is None or yaw_distance <= yaw_threshold):
                 # 满足距离和角度
-                if dis < min_distance:
-                    # 且是最近的距离
-                    min_distance = dis
+                if yaw_distance < min_yaw_distance:
+                    # 且是角度最符合的
+                    min_yaw_distance = yaw_distance
+                    min_distance = distance
+                    result = key
+                elif yaw_distance == min_yaw_distance and distance < min_distance:
+                    # 如果角度相等，考虑距离
+                    min_distance = distance
                     result = key
     return result
 
@@ -99,7 +106,7 @@ def get_closest_lane(nusc_map, target_x, target_y, target_yaw=None, radius=2):
 def get_front_lane(nusc_map, target_x, target_y, target_yaw=None):
     result = []
     # 获取车辆附近所有的车道
-    lanes = get_lanes_in_radius(target_x, target_y, 40, 1, nusc_map)
+    lanes = get_lanes_in_radius(target_x, target_y, 60, 1, nusc_map)
     target_lane_token = get_closest_lane(nusc_map, target_x, target_y, target_yaw, radius=2)
     # 车辆可能没在道路上
     if target_lane_token == '':
@@ -107,15 +114,18 @@ def get_front_lane(nusc_map, target_x, target_y, target_yaw=None):
     target_lane = lanes[target_lane_token]
     result.extend(target_lane)
     # 车道，获取与车道相连的车道
-    end_point_x, end_point_y = target_lane[-1][0], target_lane[-1][1]
+    end_point_x, end_point_y, end_point_yaw = target_lane[-1][0], target_lane[-1][1], target_lane[-1][2]
     has_next = True
     while has_next:
-        start_point_x, start_point_y, min_distance = -1, -1, 1
+        start_point_x, start_point_y, min_distance, min_yaw_distance = -1, -1, 1, np.pi
         next_lane = ''
+        # 寻找下一段车道的起点
         for lane in lanes.values():
             distance = (lane[0][0] - end_point_x) ** 2 + (lane[0][1] - end_point_y) ** 2
-            if distance <= min_distance:
-                start_point_x, start_point_y, min_distance = lane[0][0], lane[0][1], distance
+            # 角度取前3个离散点的平均角度
+            yaw_distance = abs(get_lane_start_yaw(lane) - end_point_yaw)
+            if distance <= 1 and yaw_distance <= (np.pi / 4) and yaw_distance <= min_yaw_distance:
+                start_point_x, start_point_y, min_yaw_distance = lane[0][0], lane[0][1], yaw_distance
                 next_lane = lane
         if next_lane == '':
             has_next = False
@@ -125,10 +135,25 @@ def get_front_lane(nusc_map, target_x, target_y, target_yaw=None):
     return result
 
 
+# 获取道路开头的角度，取前面几个点的平均角度
+def get_lane_start_yaw(lane):
+    if len(lane) == 0:
+        return 0
+    prefix = min(len(lane), 6)
+    sum_yaw = 0
+    for i in range(prefix):
+        sum_yaw += lane[i][2]
+    return sum_yaw / prefix
+
+
+
+
 # 获取附近的车道
 # target_x, target_y : 目标位置附近的车道
 # target_lane_token : 目标车道旁边的车道
 def get_neighbor_lane(nusc_map, target_x, target_y, target_lane, offset):
+    if len(target_lane) == 0:
+        return []
     # 获取当前车道的位置
     pos = get_closest_pos(target_lane, target_x, target_y)
     target_x, target_y, yaw = target_lane[pos][0], target_lane[pos][1], target_lane[pos][2]
@@ -175,7 +200,7 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
         relative_pos = pos - target_pos
         pos_on_left = get_closest_pos(left_lane, x, y)
         pos_on_right = get_closest_pos(right_lane, x, y)
-        distance_to_lane = distance(x, y, lane[pos][0], lane[pos][1])
+        distance_to_lane = point_distance(x, y, lane[pos][0], lane[pos][1])
 
         # 前车
         if distance_to_lane <= threshold_within_lane and pos - target_pos >= 0:
@@ -186,7 +211,7 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
 
         # 左前车、左后车
         if pos_on_left != -1:
-            distance_to_left_lane = distance(x, y, left_lane[pos_on_left][0], left_lane[pos_on_left][1])
+            distance_to_left_lane = point_distance(x, y, left_lane[pos_on_left][0], left_lane[pos_on_left][1])
             if distance_to_left_lane <= threshold_within_lane and relative_pos >= 0:
                 # 只获取最近的
                 if min_distance.get('left_front') is None or min_distance.get('left_front') > relative_pos:
@@ -200,7 +225,7 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
 
         # 右前车、右后车
         if pos_on_right != -1:
-            distance_to_right_lane = distance(x, y, right_lane[pos_on_right][0], right_lane[pos_on_right][1])
+            distance_to_right_lane = point_distance(x, y, right_lane[pos_on_right][0], right_lane[pos_on_right][1])
             if distance_to_right_lane <= threshold_within_lane and relative_pos >= 0:
                 # 只获取最近的
                 if min_distance.get('right_front') is None or min_distance.get('right_front') > relative_pos:
