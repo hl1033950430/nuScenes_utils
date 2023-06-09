@@ -29,6 +29,23 @@ def point_distance(x1, y1, x2, y2):
     return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** (1 / 2)
 
 
+# 将坐标与目标车辆坐标系对齐
+# 目标车辆的坐标系：以车辆中心点为原点，车辆前进方向为 y 轴
+def align_coordinate(target_x, target_y, target_yaw, x, y, yaw):
+    # 相对坐标
+    relative_x = x - target_x
+    relative_y = y - target_y
+    # 旋转
+    rotate_yaw = np.pi/2 - target_yaw
+    x, y = rotate(rotate_yaw, (relative_x, relative_y), (0, 0))
+    yaw += rotate_yaw
+    return x, y, yaw
+
+
+def lane_with_align_coordinate(lane, target_x, target_y, target_yaw):
+    return [align_coordinate(target_x, target_y, target_yaw, item[0], item[1], item[2]) for item in lane]
+
+
 # 获取前进方向左边的点
 def get_left_point(target_x, target_y, yaw, offset=3):
     # yaw = correct_yaw(yaw)
@@ -103,11 +120,11 @@ def get_closest_lane(nusc_map, target_x, target_y, target_yaw=None, radius=2):
 
 
 # 获取车辆前方的道路，并离散化
-def get_front_lane(nusc_map, target_x, target_y, target_yaw=None):
+def get_front_lane(nusc_map, x, y, yaw=None):
     result = []
     # 获取车辆附近所有的车道
-    lanes = get_lanes_in_radius(target_x, target_y, 60, 1, nusc_map)
-    target_lane_token = get_closest_lane(nusc_map, target_x, target_y, target_yaw, radius=2)
+    lanes = get_lanes_in_radius(x, y, 60, 1, nusc_map)
+    target_lane_token = get_closest_lane(nusc_map, x, y, yaw, radius=2)
     # 车辆可能没在道路上
     if target_lane_token == '':
         return result
@@ -135,6 +152,11 @@ def get_front_lane(nusc_map, target_x, target_y, target_yaw=None):
     return result
 
 
+def get_front_lane_with_target_coordinate(nusc_map, x, y, yaw=None, target_x=0, target_y=0, target_yaw=0):
+    front_lane = get_front_lane(nusc_map, x, y, yaw)
+    return lane_with_align_coordinate(front_lane, target_x, target_y, target_yaw)
+
+
 # 获取道路开头的角度，取前面几个点的平均角度
 def get_lane_start_yaw(lane):
     if len(lane) == 0:
@@ -149,29 +171,39 @@ def get_lane_start_yaw(lane):
 
 
 # 获取附近的车道
-# target_x, target_y : 目标位置附近的车道
+# x, y : 目标位置附近的车道
 # target_lane_token : 目标车道旁边的车道
-def get_neighbor_lane(nusc_map, target_x, target_y, target_lane, offset):
-    if len(target_lane) == 0:
+def get_neighbor_lane(nusc_map, x, y, current_lane, offset):
+    if len(current_lane) == 0:
         return []
     # 获取当前车道的位置
-    pos = get_closest_pos(target_lane, target_x, target_y)
-    target_x, target_y, yaw = target_lane[pos][0], target_lane[pos][1], target_lane[pos][2]
+    pos = get_closest_pos(current_lane, x, y)
+    x, y, yaw = current_lane[pos][0], current_lane[pos][1], current_lane[pos][2]
     # 当前车道位置，附近的点
-    x, y = offset(target_x, target_y, yaw)
+    x, y = offset(x, y, yaw)
     # 根据点获取最近的车道，要求与当前道路不同且方向与当前车道方向一致
     neighbor_lane = get_front_lane(nusc_map, x, y, yaw)
     return neighbor_lane
 
 
 # 左侧的车道
-def get_left_lane(nusc_map, target_x, target_y, target_lane):
-    return get_neighbor_lane(nusc_map, target_x, target_y, target_lane, get_left_point)
+def get_left_lane(nusc_map, x, y, current_lane):
+    return get_neighbor_lane(nusc_map, x, y, current_lane, get_left_point)
+
+
+def get_left_lane_with_target_coordinate(nusc_map, x, y, current_lane, target_x, target_y, target_yaw):
+    left_lane = get_neighbor_lane(nusc_map, x, y, current_lane, get_left_point)
+    return lane_with_align_coordinate(left_lane, target_x, target_y, target_yaw)
 
 
 # 右侧的车道
-def get_right_lane(nusc_map, target_x, target_y, target_lane):
-    return get_neighbor_lane(nusc_map, target_x, target_y, target_lane, get_right_point)
+def get_right_lane(nusc_map, x, y, current_lane):
+    return get_neighbor_lane(nusc_map, x, y, current_lane, get_right_point)
+
+
+def get_right_lane_with_target_coordinate(nusc_map, x, y, current_lane, target_x, target_y, target_yaw):
+    right_lane = get_neighbor_lane(nusc_map, x, y, current_lane, get_right_point)
+    return lane_with_align_coordinate(right_lane, target_x, target_y, target_yaw)
 
 
 # 获取附近所有车辆
