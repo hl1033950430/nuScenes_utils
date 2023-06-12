@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import torch.nn.functional
 from nuscenes.prediction import PredictHelper
 from nuscenes.map_expansion.map_api import NuScenesMap
 
@@ -36,7 +37,7 @@ def align_coordinate(target_x, target_y, target_yaw, x, y, yaw):
     relative_x = x - target_x
     relative_y = y - target_y
     # 旋转
-    rotate_yaw = np.pi/2 - target_yaw
+    rotate_yaw = np.pi / 2 - target_yaw
     x, y = rotate(rotate_yaw, (relative_x, relative_y), (0, 0))
     yaw += rotate_yaw
     return x, y, yaw
@@ -168,8 +169,6 @@ def get_lane_start_yaw(lane):
     return sum_yaw / prefix
 
 
-
-
 # 获取附近的车道
 # x, y : 目标位置附近的车道
 # target_lane_token : 目标车道旁边的车道
@@ -270,3 +269,54 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
                     min_distance['right_back'] = (-relative_pos)
 
     return result
+
+
+# 未来是否进行了变道
+def get_lane_change(helper, nusc_map, instance_token, sample_token):
+    # 当前道路
+    target_ann = helper.get_sample_annotation(instance_token, sample_token)
+    target_x, target_y = target_ann['translation'][0], target_ann['translation'][1]
+    target_yaw = get_correct_yaw(target_ann['rotation'])
+    front_lane = get_front_lane(nusc_map, target_x, target_y, target_yaw)
+    left_lane = get_left_lane(nusc_map, target_x, target_y, front_lane)
+    right_lane = get_right_lane(nusc_map, target_x, target_y, front_lane)
+    # 获取未来六秒的最后一个时间戳
+    future_anns = helper.get_future_for_agent(instance_token, sample_token, 6, False, False)
+    future_ann = future_anns[-1]
+    future_x, future_y = future_ann['translation'][0], future_ann['translation'][1]
+
+    # 哪条车道距离最近
+    front_distance, left_distance, right_distance = 100, 100, 100
+    for x, y, yaw in front_lane:
+        front_distance = min(front_distance, point_distance(x, y, future_x, future_y))
+    for x, y, yaw in left_lane:
+        left_distance = min(left_distance, point_distance(x, y, future_x, future_y))
+    for x, y, yaw in right_lane:
+        right_distance = min(right_distance, point_distance(x, y, future_x, future_y))
+
+    # 判断是否进行变道
+    threshold = 2
+    keep_lane, turn_left, turn_right = False, False, False
+    label = 'keep_lane'
+    if front_distance <= threshold or (front_distance <= left_distance and front_distance <= right_distance):
+        keep_lane = True
+    elif left_distance <= right_distance:
+        turn_left = True
+        label = 'turn_left'
+    else:
+        turn_right = True
+        label = 'turn_right'
+    return keep_lane, turn_left, turn_right, label
+
+
+# 将车辆的类型转换为 one hot 编码
+def type_with_one_hot_encoding(type):
+    type_list = get_type_list()
+    index = type_list.index(type)
+    one_hot_encoding = torch.nn.functional.one_hot(torch.tensor(index), num_classes=len(type_list))
+    return one_hot_encoding.tolist()
+
+
+def get_type_list():
+    return ['vehicle.bus.bendy', 'vehicle.bus.rigid', 'vehicle.car', 'vehicle.construction',
+            'vehicle.emergency.police', 'vehicle.truck']
