@@ -1,4 +1,5 @@
 import math
+
 import numpy as np
 import torch.nn.functional
 from nuscenes.prediction import PredictHelper
@@ -121,7 +122,11 @@ def get_closest_lane(nusc_map, target_x, target_y, target_yaw=None, radius=2):
 
 
 # 获取车辆前方的道路，并离散化
-def get_front_lane(nusc_map, x, y, yaw=None):
+def get_front_lane(nusc_map, x, y, yaw=None, _cache={}):
+    key = 'get_front_lane_{}_{}_{}'.format(nusc_map.map_name, x, y)
+    if key in _cache:
+        return _cache[key]
+
     result = []
     # 获取车辆附近所有的车道
     lanes = get_lanes_in_radius(x, y, 60, 1, nusc_map)
@@ -150,6 +155,8 @@ def get_front_lane(nusc_map, x, y, yaw=None):
         else:
             result.extend(next_lane)
             end_point_x, end_point_y = next_lane[-1][0], next_lane[-1][1]
+
+    _cache[key] = result
     return result
 
 
@@ -186,8 +193,15 @@ def get_neighbor_lane(nusc_map, x, y, current_lane, offset):
 
 
 # 左侧的车道
-def get_left_lane(nusc_map, x, y, current_lane):
-    return get_neighbor_lane(nusc_map, x, y, current_lane, get_left_point)
+def get_left_lane(nusc_map, x, y, current_lane, _cache={}):
+    key = 'get_left_lane_{}_{}_{}'.format(nusc_map.map_name, x, y)
+    if key in _cache:
+        return _cache[key]
+
+    result = get_neighbor_lane(nusc_map, x, y, current_lane, get_left_point)
+
+    _cache[key] = result
+    return result
 
 
 def get_left_lane_with_target_coordinate(nusc_map, x, y, current_lane, target_x, target_y, target_yaw):
@@ -196,8 +210,15 @@ def get_left_lane_with_target_coordinate(nusc_map, x, y, current_lane, target_x,
 
 
 # 右侧的车道
-def get_right_lane(nusc_map, x, y, current_lane):
-    return get_neighbor_lane(nusc_map, x, y, current_lane, get_right_point)
+def get_right_lane(nusc_map, x, y, current_lane, _cache={}):
+    key = 'get_right_lane_{}_{}_{}'.format(nusc_map.map_name, x, y)
+    if key in _cache:
+        return _cache[key]
+
+    result = get_neighbor_lane(nusc_map, x, y, current_lane, get_right_point)
+
+    _cache[key] = result
+    return result
 
 
 def get_right_lane_with_target_coordinate(nusc_map, x, y, current_lane, target_x, target_y, target_yaw):
@@ -206,7 +227,11 @@ def get_right_lane_with_target_coordinate(nusc_map, x, y, current_lane, target_x
 
 
 # 获取附近所有车辆
-def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
+def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token, _cache={}):
+    key = 'get_surrounding_vehicle_{}_{}'.format(instance_token, sample_token)
+    if key in _cache:
+        return _cache[key]
+
     target_ann = helper.get_sample_annotation(instance_token, sample_token)
     target_x, target_y, target_yaw = target_ann['translation']
     result = {}
@@ -268,6 +293,7 @@ def get_surrounding_vehicle(helper, nusc_map, instance_token, sample_token):
                     result['right_back'] = ann
                     min_distance['right_back'] = (-relative_pos)
 
+    _cache[key] = result
     return result
 
 
