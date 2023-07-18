@@ -139,6 +139,7 @@ class NuscenesUtil():
         target_lane_token = NuscenesUtil.get_closest_lane(nusc_map, x, y, yaw, radius=2)
         # 车辆可能没在道路上
         if target_lane_token == '':
+            _cache[key] = result
             return result
         target_lane = lanes[target_lane_token]
         result.extend(target_lane)
@@ -258,6 +259,7 @@ class NuscenesUtil():
         left_lane = NuscenesUtil.get_left_lane(nusc_map, target_x, target_y, lane)
         right_lane = NuscenesUtil.get_right_lane(nusc_map, target_x, target_y, lane)
         if len(lane) == 0:
+            _cache[key] = result
             return result
 
         # 获取周围车辆

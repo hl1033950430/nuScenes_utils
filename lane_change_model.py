@@ -4,7 +4,7 @@ from torch import nn
 
 class LaneChangeModel(nn.Module):
 
-    def __init__(self, embedding_size, lstm_hidden_size, num_stacked_layers, fc_size, time_horizon):
+    def __init__(self, embedding_size, lstm_hidden_size, num_stacked_layers, fc_size, num_multi_att_headers, time_horizon):
         super().__init__()
         self.embedding_size = embedding_size
         self.lstm_hidden_size = lstm_hidden_size
@@ -17,7 +17,9 @@ class LaneChangeModel(nn.Module):
         self.surrounding_vehicle_encoding = nn.Sequential(nn.Linear(self.surrounding_feature_size, embedding_size), nn.BatchNorm1d(embedding_size), nn.LeakyReLU())
         self.lstm_surrounding = nn.LSTM(self.embedding_size, lstm_hidden_size, num_stacked_layers, batch_first=True)
         self.lstm_target = nn.LSTM(self.embedding_size, lstm_hidden_size, num_stacked_layers, batch_first=True)
-        self.att = nn.MultiheadAttention(self.lstm_hidden_size, 32, 0.5, batch_first=True)
+        self.target_att = nn.MultiheadAttention(self.embedding_size, num_multi_att_headers, 0.5, batch_first=True)
+        self.surrounding_att = nn.MultiheadAttention(self.embedding_size, num_multi_att_headers, 0.5, batch_first=True)
+        self.att = nn.MultiheadAttention(self.lstm_hidden_size, num_multi_att_headers, 0.5, batch_first=True)
         self.fc1 = nn.Sequential(nn.Linear(lstm_hidden_size, fc_size[0]), nn.BatchNorm1d(fc_size[0]), nn.LeakyReLU())
         self.fc2 = nn.Sequential(nn.Linear(fc_size[0], fc_size[1]), nn.BatchNorm1d(fc_size[1]), nn.LeakyReLU())
         self.fc3 = nn.Sequential(nn.Linear(fc_size[1], fc_size[2]), nn.BatchNorm1d(fc_size[2]), nn.LeakyReLU())
@@ -33,6 +35,10 @@ class LaneChangeModel(nn.Module):
         target_vehicle_vector = self.target_vehicle_encoding(target_vehicle_vector)
         target_vehicle_vector = target_vehicle_vector.view(batch_size, self.time_horizon, self.embedding_size)
 
+        # target self attention
+        q, k, v = target_vehicle_vector, target_vehicle_vector, target_vehicle_vector
+        target_vehicle_vector, _ = self.target_att(q, k, v)
+
         # target vehicle lstm encoding
         h0 = torch.zeros(self.num_stacked_layers, batch_size, self.lstm_hidden_size).to(device)
         c0 = torch.zeros(self.num_stacked_layers, batch_size, self.lstm_hidden_size).to(device)
@@ -45,10 +51,14 @@ class LaneChangeModel(nn.Module):
         surrounding_vehicle_vector = self.surrounding_vehicle_encoding(surrounding_vehicle_vector)
         surrounding_vehicle_vector = surrounding_vehicle_vector.view(batch_size, self.time_horizon, 5, self.embedding_size)
 
+        # surrounding self attention
+        surrounding_vehicle_vector = surrounding_vehicle_vector.view(batch_size * 5, self.time_horizon, self.embedding_size)
+        q, k, v = surrounding_vehicle_vector, surrounding_vehicle_vector, surrounding_vehicle_vector
+        surrounding_vehicle_vector, _ = self.surrounding_att(q, k, v)
+
         # surrounding vehicle lstm encoding
         h0 = torch.zeros(self.num_stacked_layers, batch_size * 5, self.lstm_hidden_size).to(device)
         c0 = torch.zeros(self.num_stacked_layers, batch_size * 5, self.lstm_hidden_size).to(device)
-        surrounding_vehicle_vector = surrounding_vehicle_vector.view(batch_size * 5, self.time_horizon, self.embedding_size)
         lstm_surrounding_out, _ = self.lstm_surrounding(surrounding_vehicle_vector, (h0, c0))
         lstm_surrounding_out = self.activation(lstm_surrounding_out)
         lstm_surrounding_out = lstm_surrounding_out[:, -1, :]
