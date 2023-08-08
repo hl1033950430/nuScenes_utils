@@ -34,15 +34,16 @@ class NuscenesUtil():
 
     # 将坐标与目标车辆坐标系对齐
     # 目标车辆的坐标系：以车辆中心点为原点，车辆前进方向为 y 轴
+    # 角度是相对角度？还是旋转后的角度？
     @staticmethod
     def align_coordinate(target_x, target_y, target_yaw, x, y, yaw):
         # 相对坐标
         relative_x = x - target_x
         relative_y = y - target_y
+        yaw = yaw - target_yaw
         # 旋转
         rotate_yaw = np.pi / 2 - target_yaw
         x, y = NuscenesUtil.rotate(rotate_yaw, (relative_x, relative_y), (0, 0))
-        yaw += rotate_yaw
         return x, y, yaw
 
     @staticmethod
@@ -372,4 +373,8 @@ class NuscenesUtil():
                 'vehicle.emergency.police',
                 'vehicle.motorcycle',
                 'vehicle.trailer',
-                'vehicle.truck']
+                'vehicle.truck',
+                'human.pedestrian.adult',
+                'movable_object.barrier',
+                'movable_object.trafficcone',
+                ]
